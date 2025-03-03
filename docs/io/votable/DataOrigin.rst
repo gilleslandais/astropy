@@ -6,7 +6,11 @@ DataOrigin (`astropy.io.votable`)
 
 Introduction
 ============
-DataOrigin is described in the IVOA note: https://www.ivoa.net/documents/DataOrigin/.
+Extract basic provenance information from VOTable header. The information is described in 
+DataOrigin IVOA note: https://www.ivoa.net/documents/DataOrigin/.
+
+DataOrigin includes both the query information (such as publisher, contact, versions, etc.) 
+and the Dataset origin (such as Creator, bibliographic links, URL, etc.)
 
 This API retrieves Metadata from INFO in VOTAble.
 
