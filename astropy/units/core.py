@@ -9,6 +9,7 @@ from __future__ import annotations
 import inspect
 import operator
 import textwrap
+import unicodedata
 import warnings
 from functools import cached_property
 from threading import RLock
@@ -26,8 +27,7 @@ from .utils import (
     is_effectively_unity,
     resolve_fractions,
     sanitize_power,
-    sanitize_scale_type,
-    sanitize_scale_value,
+    sanitize_scale,
 )
 
 if TYPE_CHECKING:
@@ -38,7 +38,13 @@ if TYPE_CHECKING:
     from .format import Base
     from .physical import PhysicalType
     from .quantity import Quantity
-    from .typing import UnitPower, UnitPowerLike, UnitScale, UnitScaleLike
+    from .typing import (
+        PhysicalTypeID,
+        UnitPower,
+        UnitPowerLike,
+        UnitScale,
+        UnitScaleLike,
+    )
 
 __all__ = [
     "CompositeUnit",
@@ -419,7 +425,7 @@ def set_enabled_units(units: object) -> _UnitContext:
       Primary name | Unit definition | Aliases
     [
       AU           | 1.49598e+11 m   | au, astronomical_unit            ,
-      Angstrom     | 1e-10 m         | AA, angstrom                     ,
+      Angstrom     | 1e-10 m         | AA, angstrom, Å                  ,
       cm           | 0.01 m          | centimeter                       ,
       earthRad     | 6.3781e+06 m    | R_earth, Rearth                  ,
       jupiterRad   | 7.1492e+07 m    | R_jup, Rjup, R_jupiter, Rjupiter ,
@@ -467,7 +473,7 @@ def add_enabled_units(units: object) -> _UnitContext:
       Primary name | Unit definition | Aliases
     [
       AU           | 1.49598e+11 m   | au, astronomical_unit            ,
-      Angstrom     | 1e-10 m         | AA, angstrom                     ,
+      Angstrom     | 1e-10 m         | AA, angstrom, Å                  ,
       cm           | 0.01 m          | centimeter                       ,
       earthRad     | 6.3781e+06 m    | R_earth, Rearth                  ,
       ft           | 0.3048 m        | foot                             ,
@@ -669,7 +675,7 @@ class UnitBase:
         return f'Unit("{self}")'
 
     @cached_property
-    def _physical_type_id(self) -> tuple[tuple[str, UnitPower], ...]:
+    def _physical_type_id(self) -> PhysicalTypeID:
         """
         Returns an identifier that uniquely identifies the physical
         type of this unit.  It is comprised of the bases and powers of
@@ -902,9 +908,7 @@ class UnitBase:
 
     @cached_property
     def _hash(self) -> int:
-        return hash(
-            (str(self.scale), *[x.name for x in self.bases], *map(str, self.powers))
-        )
+        return hash((self.scale, *[x.name for x in self.bases], *map(str, self.powers)))
 
     def __getstate__(self) -> dict[str, object]:
         # If we get pickled, we should *not* store the memoized members since
@@ -1233,9 +1237,8 @@ class UnitBase:
             return all(base in namespace for base in unit.bases)
 
         unit = self.decompose()
-        key = hash(unit)
 
-        cached = cached_results.get(key)
+        cached = cached_results.get(unit)
         if cached is not None:
             if isinstance(cached, Exception):
                 raise cached
@@ -1244,7 +1247,7 @@ class UnitBase:
         # Prevent too many levels of recursion
         # And special case for dimensionless unit
         if depth >= max_depth:
-            cached_results[key] = [unit]
+            cached_results[unit] = [unit]
             return [unit]
 
         # Make a list including all of the equivalent units
@@ -1297,7 +1300,7 @@ class UnitBase:
         for final_result in final_results:
             if len(final_result):
                 results = final_results[0].union(final_results[1])
-                cached_results[key] = results
+                cached_results[unit] = results
                 return results
 
         partial_results.sort(key=operator.itemgetter(0))
@@ -1331,18 +1334,18 @@ class UnitBase:
                 if is_final_result(factored):
                     subresults.add(factored)
 
-            if len(subresults):
-                cached_results[key] = subresults
+            if subresults:
+                cached_results[unit] = subresults
                 return subresults
 
         if not is_final_result(self):
             result = UnitsError(
                 f"Cannot represent unit {self} in terms of the given units"
             )
-            cached_results[key] = result
+            cached_results[unit] = result
             raise result
 
-        cached_results[key] = [self]
+        cached_results[unit] = [self]
         return [self]
 
     def compose(
@@ -1832,10 +1835,10 @@ class NamedUnit(UnitBase):
 
         # Loop through all of the names first, to ensure all of them
         # are new, then add them all as a single "transaction" below.
-        for name in self._names:
+        for name in (unicodedata.normalize("NFKC", name) for name in self._names):
             if name in namespace and self != namespace[name]:
                 raise ValueError(
-                    f"Object with name {name!r} already exists in "
+                    f"Object with NFKC normalized name {name!r} already exists in "
                     f"given namespace ({namespace[name]!r})."
                 )
 
@@ -2076,7 +2079,7 @@ class _UnitMetaClass(type):
             if is_effectively_unity(s.value):
                 return s.unit
             return CompositeUnit(
-                sanitize_scale_type(s.value) * s.unit.scale,
+                sanitize_scale(s.value) * s.unit.scale,
                 bases=s.unit.bases,
                 powers=s.unit.powers,
                 _error_check=False,
@@ -2207,9 +2210,7 @@ class Unit(NamedUnit, metaclass=_UnitMetaClass):
         return hash((self.name, self._represents))
 
     @classmethod
-    def _from_physical_type_id(
-        cls, physical_type_id: tuple[tuple[str, UnitPower], ...]
-    ) -> UnitBase:
+    def _from_physical_type_id(cls, physical_type_id: PhysicalTypeID) -> UnitBase:
         if len(physical_type_id) == 1 and physical_type_id[0][1] == 1:
             return cls(physical_type_id[0][0])
         # get string bases and powers from the ID tuple
@@ -2296,7 +2297,7 @@ class CompositeUnit(UnitBase):
         # kwarg `_error_check` is False, the error checking is turned
         # off.
         if _error_check:
-            scale = sanitize_scale_type(scale)
+            scale = sanitize_scale(scale)
             for base in bases:
                 if not isinstance(base, UnitBase):
                     raise TypeError("bases must be sequence of UnitBase instances")
@@ -2323,7 +2324,7 @@ class CompositeUnit(UnitBase):
                     for p in unit.powers
                 ]
 
-            self._scale = sanitize_scale_value(scale)
+            self._scale = sanitize_scale(scale)
         else:
             # Regular case: use inputs as preliminary scale, bases, and powers,
             # then "expand and gather" identical bases, sanitize the scale, &c.
@@ -2397,7 +2398,7 @@ class CompositeUnit(UnitBase):
 
         self._bases = [x[0] for x in new_parts]
         self._powers = [sanitize_power(x[1]) for x in new_parts]
-        self._scale = sanitize_scale_value(scale)
+        self._scale = sanitize_scale(scale)
 
     def __copy__(self) -> CompositeUnit:
         return CompositeUnit(self._scale, self._bases[:], self._powers[:])
@@ -2549,7 +2550,7 @@ def _add_prefixes(
             for alias in u.long_names:
                 names.append(prefix + alias)
 
-        if len(names):
+        if names:
             PrefixUnit(
                 names,
                 CompositeUnit(factor, [u], [1], _error_check=False),

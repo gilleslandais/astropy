@@ -91,7 +91,7 @@ class Covariance:
         # Print rows for params up to `max_lines`, round floats to 'round_val'
         longest_name = max(len(x) for x in self.param_names)
         ret_str = "parameter variances / covariances \n"
-        fstring = f'{"": <{longest_name}}| {{0}}\n'
+        fstring = f"{'': <{longest_name}}| {{0}}\n"
         for i, row in enumerate(self.cov_matrix):
             if i <= max_lines - 1:
                 param = self.param_names[i]
@@ -1175,8 +1175,10 @@ class _NonLinearLSQFitter(Fitter):
             raise NonFiniteValueError(
                 "Objective function has encountered a non-finite value, "
                 "this will cause the fit to fail!\n"
-                "Please remove non-finite values from your input data before "
-                "fitting to avoid this error."
+                "This can be caused by non-finite values in the input data "
+                "or weights, which can be removed with fit(..., "
+                "filter_non_finite=True), or by diverging model parameters "
+                "that yield non-finite model values."
             )
 
         return value
