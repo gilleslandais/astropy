@@ -1,6 +1,6 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 
-"""Extract Data Origin in VOTable
+"""Extract Data Origin in VOTable.
 
 References
 ----------
@@ -9,7 +9,7 @@ DataOrigin is a vocabulary described in the IVOA note: https://www.ivoa.net/docu
 Notes
 -----
 This API retrieve Metadata from INFO in VOTable.
-The information can be found at different level in a VOTable :
+The information can be found at different level in a VOTable:
 
 - global level
 - resource level
@@ -24,19 +24,7 @@ Contents
 
 Examples
 --------
->>> from astropy.io.votable import parse
->>> from astropy.io.votable.dataorigin import extract_data_origin
->>> data_origin = extract_data_origin(parse("https://vizier.cds.unistra.fr/viz-bin/conesearch/II/246/out?RA=0&DEC=0&SR=0.1"))  # doctest: +REMOTE_DATA
->>> print(data_origin)  # doctest: +REMOTE_DATA +IGNORE_OUTPUT
-publisher: CDS
-server_software: 7.4.5
-service_protocol: ivo://ivoa.net/std/ConeSearch/v1.03
-request: https://vizier.cds.unistra.fr/viz-bin/conesearch/II/246/out?RA=0&DEC=0&SR=0.1
-request_date: 2025-03-03T12:54:26
-contact: cds-question@unistra.fr
-...
->>> uri_request = data_origin.query.request  # doctest: +REMOTE_DATA
->>> creators =  data_origin.origin[0].creator  # doctest: +REMOTE_DATA
+For more information, please see :ref:`DataOrigin documentation <astropy-io-votable-dataorigin>`.
 """
 
 import astropy.io.votable.tree
@@ -143,7 +131,7 @@ class DatasetOrigin:
     Notes
     -----
     DatasetOrigin is dedicated to a specific Element in a VOTable.
-    These ``<INFO>`` Elements describe a Resource, a Table or are Global.
+    These ``<INFO>`` Elements describe a Resource, a TableElement or are Global.
 
     Attributes
     ----------
@@ -352,13 +340,13 @@ def __extract_dali_info(infos: list, data_origin: DataOrigin):
 
 
 def __extract_info_from_table(
-    table: astropy.io.votable.tree.Table, data_origin: DataOrigin
+    table: astropy.io.votable.tree.TableElement, data_origin: DataOrigin
 ):
-    """(internal) extract and populate dataOrigin from astropy.io.votable.tree.Table
+    """(internal) extract and populate dataOrigin from astropy.io.votable.tree.TableElement
 
     Parameters
     ----------
-    table : astropy.io.votable.tree.Table
+    table : astropy.io.votable.tree.TableElement
         Table to explore
 
     data_origin : DataOrigin
@@ -430,20 +418,18 @@ def extract_data_origin(vot_element: astropy.io.votable.tree.Element) -> DataOri
 
     Raises
     ------
-    Exception
-        input type not managed
+    TypeError
+        input ``vot_element`` type is not supported
     """
     data_origin = DataOrigin()
     if isinstance(vot_element, astropy.io.votable.tree.VOTableFile):
         __extract_info_from_votable(vot_element, data_origin)
     elif isinstance(vot_element, astropy.io.votable.tree.Resource):
         __extract_info_from_resource(vot_element, data_origin)
-    elif isinstance(vot_element, astropy.io.votable.tree.Table):
-        __extract_info_from_table(vot_element, data_origin)
     elif isinstance(vot_element, astropy.io.votable.tree.TableElement):
         __extract_info_from_table(vot_element, data_origin)
     else:
-        raise Exception("type not managed")
+        raise TypeError("input vot_element type is not supported.")
 
     return data_origin
 
@@ -478,8 +464,12 @@ def add_data_origin_info(
 
     Raises
     ------
-    Exception
+    TypeError
         input type not managed or information name not recognized
+    ValueError
+        ``info_name`` already exists in ``vot_element``
+    ValueError
+        ``info_name`` is an unknown DataOrigin name.
     """
     if info_name in DATAORIGIN_INFO:
         if not isinstance(
@@ -487,28 +477,24 @@ def add_data_origin_info(
             (
                 astropy.io.votable.tree.VOTableFile,
                 astropy.io.votable.tree.Resource,
-                astropy.io.votable.tree.Table,
+                astropy.io.votable.tree.TableElement,
             ),
         ):
-            raise Exception("Bad type of vot_element")
-
-        vot_element.infos.extend(
-            [astropy.io.votable.tree.Info(name=info_name, value=info_value)]
-        )
-        return
+            raise TypeError("Unsupported vot_element type.")
 
     elif info_name in DATAORIGIN_QUERY_INFO:
         if not isinstance(vot_element, astropy.io.votable.tree.VOTableFile):
-            raise Exception(
-                "Bad type of vot_element: this information needs VOTableFile"
+            raise TypeError(
+                "Bad type of vot_element: this information needs VOTableFile."
             )
 
         for info in vot_element.get_infos_by_name(info_name):
-            raise Exception(f"QueryOrigin {info_name} already exists")
-        new_info = astropy.io.votable.tree.Info(name=info_name, value=info_value)
-        if content:
-            new_info.content = content
-        vot_element.infos.extend([new_info])
-        return
+            raise ValueError(f"QueryOrigin {info_name} already exists")
 
-    raise Exception("Unknown DataOrigin info name")
+    else:
+        raise ValueError("Unknown DataOrigin info name.")
+
+    new_info = astropy.io.votable.tree.Info(name=info_name, value=info_value)
+    if content:
+        new_info.content = content
+    vot_element.infos.extend([new_info])

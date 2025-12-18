@@ -1,5 +1,7 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 
+import pytest
+
 import astropy.io.votable
 import astropy.io.votable.dataorigin as dataorigin
 from astropy.table import Column, Table
@@ -41,37 +43,32 @@ def test_dataorigin():
     vot = __add_origin()
     do = dataorigin.extract_data_origin(vot)
 
-    dores = dataorigin.extract_data_origin(vot.resources[0])
-    dot = dataorigin.extract_data_origin(vot.resources[0].tables[0])
-    for dseto in do:
-        pass
-
     assert do.query.publisher == __TEST_PUBLISHER_NAME
     assert len(do.origin) == 1 and len(do.origin[0].creator) == 2
     assert do.origin[0].creator[0] == __TEST_CREATOR1_NAME
     assert len(str(do)) > 1
-    assert (do.origin[0].get_votable_element()) != None
+    assert (do.origin[0].get_votable_element()) is not None
 
-    err = False
-    try:
+    dores = dataorigin.extract_data_origin(vot.resources[0])
+    dot = dataorigin.extract_data_origin(vot.resources[0].tables[0])
+
+    assert dores.origin[0].creator == do.origin[0].creator
+    assert len(dot.origin) == 0
+
+    with pytest.raises(ValueError, match="QueryOrigin contact already exists"):
         # QueryOrigin attributes are unique
         dataorigin.add_data_origin_info(vot, "contact", "othercontact")
-    except Exception as e:
-        err = True
-    assert err is True
 
-    err = False
-    try:
+    with pytest.raises(TypeError, match="Bad type of vot_element"):
         # contact should be global in VOFile node
         dataorigin.add_data_origin_info(vot.resources[0], "contact", "othercontact")
-    except Exception as e:
-        err = True
-    assert err is True
 
-    err = False
-    try:
+    with pytest.raises(ValueError, match="Unknown DataOrigin info name."):
         dataorigin.add_data_origin_info(vot.resources[0], "unexistingkey", "value")
-    except Exception as e:
-        err = True
-    assert err is True
-    assert err is True
+
+
+def test_dataorigin_unsupported_input_error():
+    table = Table.read(__generate_votable_test())
+
+    with pytest.raises(TypeError, match="input vot_element type is not supported."):
+        dataorigin.extract_data_origin(table)
