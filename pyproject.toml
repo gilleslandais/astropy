@@ -43,7 +43,7 @@ keywords = [
     "ascii",
 ]
 dependencies = [
-    "astropy-iers-data>=0.2026.4.1.15.5.49",
+    "astropy-iers-data>=0.2026.4.27.1.3.2",
     "numpy>=2.0",
     "packaging>=25.0",
     "pyerfa>=2.0.1.3",  # for >=2.0.1.7, adjust structured_units.rst and doctest-requires
@@ -142,21 +142,9 @@ docs = [
     "sphinx_design>=0.6.1",
     "Jinja2>=3.1.3",
     "sphinxcontrib-globalsubs >= 0.1.1",
-    "matplotlib>=3.9.1",  # https://github.com/matplotlib/matplotlib/issues/28234
+    "matplotlib!=3.9.0",  # https://github.com/matplotlib/matplotlib/issues/28234
     "dask[dataframe]>=2024.8.0", # keep in sync with dependency-groups.dataframe
     "fsspec[http,s3]>=2023.4.0",  # keep in sync with dependency-groups.dataframe
-]
-# These group together all the dependencies needed for developing in Astropy.
-dev = [
-    "astropy[recommended]",  # installs the most common optional dependencies
-    "astropy[test]",
-    "astropy[docs]",
-    "astropy[typing]",
-]
-dev_all = [
-    "tox>=4.33.0", # keep in sync with tox.minversion in tox.ini
-    "astropy[dev]",
-    "astropy[test_all]",
 ]
 
 [project.urls]
@@ -195,9 +183,24 @@ dataframe = [
     "narwhals>=1.42.0",
     "pyarrow>=16.0",
     "pandas>=2.2.2",
-    "polars>=1.0.0",
+    "polars>=1.18.0",
     "duckdb>=1.1.0",
     "dask[dataframe]>=2024.8.0", # keep in sync with other declarations
+]
+# re-define historical optional dependencies (a.k.a. 'extras') as
+# user-invisible, PEP 735 dependency groups
+# These group together all the dependencies needed for developing in Astropy.
+dev = [
+    "astropy[recommended]",  # installs the most common optional dependencies
+    "astropy[test]",
+    "astropy[docs]",
+    "astropy[typing]",
+]
+dev_all = [
+    {include-group = "dev"},
+    {include-group = "dataframe"},
+    "astropy[test_all]",
+    "tox>=4.33.0", # keep in sync with tox.minversion in tox.ini
 ]
 
 [tool.setuptools]
@@ -261,7 +264,8 @@ filterwarnings = [
     "ignore:invalid value encountered in do_format:RuntimeWarning",
     # https://github.com/astropy/astropy/issues/19511
     "ignore:Implicitly cleaning up <HTTPError 404:ResourceWarning",
-    "ignore:unclosed <socket.socket:ResourceWarning",
+    "ignore:unclosed <socket:ResourceWarning",
+    "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
 ]
 doctest_norecursedirs = [
     "*/setup_package.py",
@@ -343,6 +347,7 @@ archs = ["auto", "aarch64"]
             # Don't complain if tests don't hit defensive assertion code:
             "raise AssertionError",
             "raise NotImplementedError",
+            "^\\s*case _ as unreachable:",
             # Don't complain about script hooks
             "'def main(.*):'",
             # Ignore branches that don't pertain to this version of Python
@@ -490,6 +495,7 @@ exclude = [
 [tool.ruff.lint.extend-per-file-ignores]
 "setup.py" = ["INP001"]  # Part of configuration, not a package.
 ".github/workflows/*.py" = ["INP001"]
+"astropy/config/_tempfile_shim.py" = ["UP032", "PLE0704", "PTH"]
 "astropy/modeling/models/__init__.py" = ["F405"]
 "astropy/utils/decorators.py" = [
     "D214", "D215",  # keep Examples section indented.
@@ -531,7 +537,6 @@ ignore = [
     "PC140", # ignore using `mypy` in pre-commit
     "PC180", # ignore using `prettier` in pre-commit
     "PC901", # ignore using custom update message (we have many of the default ones in our history already)
-    "PP006", # ignore defining dev dependency group
     "PP308", # ignore requiring `-ra` flag for pytest, astropy's test suite is too large for this to be useful
     "PY005", # ignore requiring a root level "test*" directory
 ]
@@ -862,3 +867,7 @@ constraint-dependencies = [
     # see https://github.com/astropy/astropy/issues/18292
     "array-api-strict<2.4 ; python_version<'3.12'",
 ]
+
+# uv sync's default behavior includes the 'dev' group.
+# Disable this so we get lightweight envs by default.
+default-groups = []
