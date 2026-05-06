@@ -1,8 +1,13 @@
 import abc
 import numbers
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable
+from typing import Any, Protocol
 
 import numpy as np
+from numpy.typing import ArrayLike
+
+from astropy.utils.masked import Masked, MaskedNDArray, combine_masks
 
 from .utils import deserialize_class
 
@@ -12,6 +17,28 @@ __all__ = [
     "high_level_objects_to_values",
     "values_to_high_level_objects",
 ]
+
+
+_WorldAxisComponent = tuple[str, str | int, str | Callable[[Any], Any]]
+_WorldAxisClass = (
+    tuple[type[Any] | str, tuple[Any, ...], dict[str, Any]]
+    | tuple[type[Any] | str, tuple[Any, ...], dict[str, Any], Callable[..., Any]]
+)
+
+
+class _WorldAxisMetadata(Protocol):
+    """
+    Structural-subtyping interface for the world axis metadata used by
+    `high_level_objects_to_values` and `values_to_high_level_objects`.
+
+    Any object exposing the two attributes below is accepted as the
+    ``low_level_wcs`` argument of those functions; this includes any
+    `BaseLowLevelWCS` instance. The optional ``serialized_classes`` attribute
+    is recognised when present and otherwise treated as ``False``.
+    """
+
+    world_axis_object_classes: dict[str, _WorldAxisClass]
+    world_axis_object_components: list[_WorldAxisComponent]
 
 
 def rec_getattr(obj, att):
@@ -134,7 +161,9 @@ class BaseHighLevelWCS(metaclass=abc.ABCMeta):
             )
 
 
-def high_level_objects_to_values(*world_objects, low_level_wcs):
+def high_level_objects_to_values(
+    *world_objects: Any, low_level_wcs: _WorldAxisMetadata
+) -> list[float | int | np.ndarray]:
     """
     Convert the input high level object to low level values.
 
@@ -148,7 +177,7 @@ def high_level_objects_to_values(*world_objects, low_level_wcs):
 
     Parameters
     ----------
-    *world_objects : object
+    *world_objects : `~astropy.coordinates.SkyCoord`, `~astropy.units.Quantity`, etc.
         High level coordinate objects.
 
     low_level_wcs : `.BaseLowLevelWCS` or object
@@ -268,7 +297,11 @@ def high_level_objects_to_values(*world_objects, low_level_wcs):
     # arrays, not e.g. Quantity. Note that we deliberately use type(w) because
     # we don't want to match Numpy subclasses.
     for w in world:
-        if not isinstance(w, numbers.Number) and not type(w) == np.ndarray:
+        if (
+            not isinstance(w, numbers.Number)
+            and not type(w) == np.ndarray
+            and not type(w) == MaskedNDArray
+        ):
             raise TypeError(
                 f"WCS world_axis_object_components results in "
                 f"values which are not scalars or plain Numpy "
@@ -278,7 +311,9 @@ def high_level_objects_to_values(*world_objects, low_level_wcs):
     return world
 
 
-def values_to_high_level_objects(*world_values, low_level_wcs):
+def values_to_high_level_objects(
+    *world_values: ArrayLike, low_level_wcs: _WorldAxisMetadata
+) -> list[Any]:
     """
     Convert low level values into high level objects.
 
@@ -291,7 +326,7 @@ def values_to_high_level_objects(*world_values, low_level_wcs):
 
     Parameters
     ----------
-    *world_values : object
+    *world_values : `~numpy.typing.ArrayLike`
         Low level, "values" representations of the world coordinates.
 
     low_level_wcs : `.BaseLowLevelWCS` or object
@@ -308,7 +343,11 @@ def values_to_high_level_objects(*world_values, low_level_wcs):
     # arrays, not e.g. Quantity. Note that we deliberately use type(w) because
     # we don't want to match Numpy subclasses.
     for w in world_values:
-        if not isinstance(w, numbers.Number) and not type(w) == np.ndarray:
+        if (
+            not isinstance(w, numbers.Number)
+            and not type(w) == np.ndarray
+            and not type(w) == MaskedNDArray
+        ):
             raise TypeError(
                 f"Expected world coordinates as scalars or plain Numpy "
                 f"arrays (got {type(w)})"
@@ -365,21 +404,27 @@ class HighLevelWCSMixin(BaseHighLevelWCS):
         return self
 
     def world_to_pixel(self, *world_objects):
+        values, masks = MaskedNDArray._get_data_and_masks(world_objects)
         world_values = high_level_objects_to_values(
-            *world_objects, low_level_wcs=self.low_level_wcs
+            *values, low_level_wcs=self.low_level_wcs
         )
 
         # Finally we convert to pixel coordinates
         pixel_values = self.low_level_wcs.world_to_pixel_values(*world_values)
-
+        if (mask := combine_masks(masks)) is not False:
+            pixel_values = tuple(Masked(value, mask) for value in pixel_values)
         return pixel_values
 
     def pixel_to_world(self, *pixel_arrays):
+        values, masks = MaskedNDArray._get_data_and_masks(pixel_arrays)
         # Compute the world coordinate values
-        world_values = self.low_level_wcs.pixel_to_world_values(*pixel_arrays)
+        world_values = self.low_level_wcs.pixel_to_world_values(*values)
 
         if self.low_level_wcs.world_n_dim == 1:
             world_values = (world_values,)
+
+        if (mask := combine_masks(masks)) is not False:
+            world_values = tuple(Masked(value, mask) for value in world_values)
 
         pixel_values = values_to_high_level_objects(
             *world_values, low_level_wcs=self.low_level_wcs

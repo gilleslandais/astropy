@@ -30,6 +30,7 @@ from astropy.units import Quantity, UnitsWarning
 from astropy.utils import iers
 from astropy.utils.data import get_pkg_data_filename
 from astropy.utils.exceptions import AstropyDeprecationWarning, AstropyUserWarning
+from astropy.utils.masked import Masked
 from astropy.wcs.wcs import WCS, WCSLIB_VERSION, FITSFixedWarning, NoConvergence, Sip
 from astropy.wcs.wcsapi.fitswcs import VELOCITY_FRAMES, custom_ctype_to_ucd_mapping
 from astropy.wcs.wcsapi.tests.helpers import assert_celestial_component
@@ -302,28 +303,24 @@ def test_spectral_cube():
     coord = SkyCoord(25, 10, unit="deg", frame="galactic")
     spec = 20 * u.Hz
 
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        x, y, z = wcs.world_to_pixel(coord, spec)
+    x, y, z = wcs.world_to_pixel(coord, spec)
     assert_allclose(x, 29.0)
     assert_allclose(y, 39.0)
     assert_allclose(z, 44.0)
 
     # Order of world coordinates shouldn't matter
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        x, y, z = wcs.world_to_pixel(spec, coord)
+    x, y, z = wcs.world_to_pixel(spec, coord)
     assert_allclose(x, 29.0)
     assert_allclose(y, 39.0)
     assert_allclose(z, 44.0)
 
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        i, j, k = wcs.world_to_array_index(coord, spec)
+    i, j, k = wcs.world_to_array_index(coord, spec)
     assert_equal(i, 44)
     assert_equal(j, 39)
     assert_equal(k, 29)
 
     # Order of world coordinates shouldn't matter
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        i, j, k = wcs.world_to_array_index(spec, coord)
+    i, j, k = wcs.world_to_array_index(spec, coord)
     assert_equal(i, 44)
     assert_equal(j, 39)
     assert_equal(k, 29)
@@ -1126,12 +1123,7 @@ def test_different_ctypes(header_spectral_frames, ctype3, observer):
 
     assert isinstance(spectralcoord, SpectralCoord)
 
-    if observer:
-        pix = wcs.world_to_pixel(skycoord, spectralcoord)
-    else:
-        with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-            pix = wcs.world_to_pixel(skycoord, spectralcoord)
-
+    pix = wcs.world_to_pixel(skycoord, spectralcoord)
     assert_allclose(pix, [0, 0, 31], rtol=1e-6, atol=1e-9)
 
 
@@ -1224,11 +1216,14 @@ def test_spectral_1d(header_spectral_1d, ctype1, observer):
     assert (spectralcoord.observer is not None) is observer
 
     if observer:
-        expected_message = "No target defined on SpectralCoord"
+        # WCS has observer, SpectralCoord has observer but no target,
+        # so we still warn that the target is missing.
+        with pytest.warns(
+            AstropyUserWarning, match="No target defined on SpectralCoord"
+        ):
+            pix = wcs.world_to_pixel(spectralcoord)
     else:
-        expected_message = "No observer defined on WCS"
-
-    with pytest.warns(AstropyUserWarning, match=expected_message):
+        # Neither WCS nor SpectralCoord has an observer, so no warning.
         pix = wcs.world_to_pixel(spectralcoord)
 
     assert_allclose(pix, [31], rtol=1e-6)
@@ -1245,11 +1240,12 @@ def test_spectral_1d(header_spectral_1d, ctype1, observer):
         )
 
     if observer:
-        expected_message = "No observer defined on SpectralCoord"
+        with pytest.warns(
+            AstropyUserWarning, match="No observer defined on SpectralCoord"
+        ):
+            pix2 = wcs.world_to_pixel(spectralcoord_no_obs)
     else:
-        expected_message = "No observer defined on WCS"
-
-    with pytest.warns(AstropyUserWarning, match=expected_message):
+        # Neither WCS nor SpectralCoord has an observer, so no warning.
         pix2 = wcs.world_to_pixel(spectralcoord_no_obs)
     assert_allclose(pix2, [31], rtol=1e-6)
 
@@ -1598,19 +1594,18 @@ def test_restfrq_restwav():
 def test_array_index_conversions_arrays_1d():
     # Regression test for a bug that caused world_to_array_index to return lists
     # instead of Numpy arrays - 1D version
+    # Also ensures that pixels are plain arrays if the array is not Masked.
 
     wcs = WCS(naxis=1)
     wcs.wcs.ctype = ("FREQ",)
 
     coord = SpectralCoord([10, 12], unit="Hz")
 
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        i = wcs.world_to_array_index(coord)
+    i = wcs.world_to_array_index(coord)
     assert isinstance(i, np.ndarray)
 
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        x = wcs.world_to_pixel(coord)
-    assert isinstance(x, np.ndarray)
+    x = wcs.world_to_pixel(coord)
+    assert isinstance(x, np.ndarray) and not isinstance(x, Masked)
 
 
 def test_array_index_conversions_arrays_2d():
@@ -1628,7 +1623,21 @@ def test_array_index_conversions_arrays_2d():
 
     x, y = wcs.world_to_pixel(coord)
     assert isinstance(x, np.ndarray)
-    assert isinstance(x, np.ndarray)
+    assert isinstance(y, np.ndarray)
+
+    # Also check that pixels are plain arrays if the array is not Masked.
+    assert not isinstance(x, Masked) and not isinstance(y, Masked)
+    # But will be masked once mask has been set on any item.
+    coord[0] = np.ma.masked
+    x, y = wcs.world_to_pixel(coord)
+    assert isinstance(x, Masked) and isinstance(y, Masked)
+    assert_array_equal(x.mask, coord.mask)
+    assert_array_equal(y.mask, coord.mask)
+    # Even if the mask is later unset.
+    coord[:] = np.ma.nomask
+    x, y = wcs.world_to_pixel(coord)
+    assert isinstance(x, Masked) and isinstance(y, Masked)
+    assert not x.mask.any() and not y.mask.any()
 
 
 def test_array_index_conversions_scalars_1d():
@@ -1639,12 +1648,10 @@ def test_array_index_conversions_scalars_1d():
 
     coord = SpectralCoord(10, unit="Hz")
 
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        i = wcs.world_to_array_index(coord)
+    i = wcs.world_to_array_index(coord)
     assert isinstance(i, np.ndarray) and i.ndim == 0
 
-    with pytest.warns(AstropyUserWarning, match="No observer defined on WCS"):
-        x = wcs.world_to_pixel(coord)
+    x = wcs.world_to_pixel(coord)
     assert isinstance(x, np.ndarray) and x.ndim == 0
 
 
@@ -1663,3 +1670,24 @@ def test_array_index_conversions_scalars_2d():
     x, y = wcs.world_to_pixel(scoord)
     assert isinstance(x, np.ndarray) and x.ndim == 0
     assert isinstance(y, np.ndarray) and y.ndim == 0
+
+
+class TestMaskedData:
+    wcs = WCS_SIMPLE_CELESTIAL
+
+    def test_pixel_to_world(self):
+        mask = [False, True]
+        x = Masked([4.907, -75.09299637], mask=mask)
+        y = Masked([73.8485, 223.84849637], mask=mask)
+        world = self.wcs.pixel_to_world(x, y)
+        assert_array_equal(world.mask, mask)
+
+    def test_world_to_pixel(self):
+        coord = SkyCoord(
+            l=Masked([0, 1] * u.deg, mask=[False, True]),
+            b=Masked([0, 1] * u.deg, mask=[False, True]),
+            frame="galactic",
+        )
+        x, y = self.wcs.world_to_pixel(coord)
+        assert_array_equal(x.mask, coord.mask)
+        assert_array_equal(y.mask, coord.mask)
